@@ -25,10 +25,7 @@ class BagCounter:
         line_end: Tuple[int, int] = (1200, 400),
         direction: str = "ANY",
         roi_polygon: Optional[List[Tuple[int, int]]] = None,
-        margin_percent: float = 0.20,  # 20% line length margin tolerance
-        polygon_reid_window_frames: int = 6,  # how many frames to still consider a track-id switch as "same physical bag"
-        polygon_reid_iou_threshold: float = 0.30,  # min IOU required to treat as same physical bag
-        polygon_reid_distance_px: float = 25.0  # base max center distance (px) required to treat as same physical bag
+        margin_percent: float = 0.20  # 20% line length margin tolerance
     ):
         self.mode = mode.upper()
         self.counting_box = counting_box
@@ -37,10 +34,7 @@ class BagCounter:
         self.direction = direction
         self.roi_polygon = roi_polygon
         self.margin_percent = margin_percent
-        self.polygon_reid_window_frames = polygon_reid_window_frames
-        self.polygon_reid_iou_threshold = polygon_reid_iou_threshold
-        self.polygon_reid_distance_px = polygon_reid_distance_px
-
+        
         # Track state
         self.counted_track_ids: Set[int] = set()
         self.track_history: Dict[int, List[Tuple[float, float]]] = {}
@@ -201,35 +195,23 @@ class BagCounter:
         self,
         bbox: Tuple[float, float, float, float]
     ) -> Optional[Dict[str, object]]:
-        """
-        Match a new tracker ID to a recently counted physical bag, so that a brief
-        tracker ID-switch (occlusion re-ID) on the SAME physical bag doesn't get
-        counted twice.
-
-        IMPORTANT: On a conveyor belt every bag passes through roughly the same
-        polygon location, so a loose "IOU OR distance" check will also match a
-        genuinely NEW bag to the previous one and silently skip counting it.
-        To avoid that, we require BOTH a high IOU AND a small center distance
-        (i.e. near-identical position — consistent with an ID switch on the same
-        object), and only within a short recency window.
-        """
+        """Match a new tracker ID to a recently counted physical bag."""
         x1, y1, x2, y2 = bbox
         center_x, center_y = self.calculate_center(bbox)
         max_dimension = max(x2 - x1, y2 - y1)
         for counted_object in self.polygon_counted_objects:
             previous_bbox = counted_object["bbox"]
             previous_center = counted_object["center"]
-            if self.frame_index - int(counted_object["last_seen"]) > self.polygon_reid_window_frames:
+            if self.frame_index - int(counted_object["last_seen"]) > 15:
                 continue
             previous_x, previous_y = previous_center
             center_distance = float(
                 np.hypot(center_x - previous_x, center_y - previous_y)
             )
-            iou = self._box_iou(bbox, previous_bbox)
-            distance_ok = center_distance <= max(
-                self.polygon_reid_distance_px, max_dimension * 0.35
-            )
-            if iou >= self.polygon_reid_iou_threshold and distance_ok:
+            if (
+                self._box_iou(bbox, previous_bbox) >= 0.10
+                or center_distance <= max(40.0, max_dimension * 0.75)
+            ):
                 return counted_object
         return None
 
@@ -305,11 +287,6 @@ class BagCounter:
                     })
                     new_count = True
                     logger.info(f"Bag counted (Polygon Zone Entry): track_id={track_id}, total={self.total_count}")
-                elif entered_polygon and matched_counted_object is not None:
-                    logger.debug(
-                        f"Polygon entry for track_id={track_id} treated as re-ID of an "
-                        f"already-counted bag (ID switch); not counted again."
-                    )
             else:
                 # Mode B: Line Crossing
                 for past_pt in (prev_center, history[0]):
@@ -348,7 +325,7 @@ class BagCounter:
         self.polygon_counted_objects = [
             counted_object
             for counted_object in self.polygon_counted_objects
-            if self.frame_index - int(counted_object["last_seen"]) <= self.polygon_reid_window_frames
+            if self.frame_index - int(counted_object["last_seen"]) <= 15
         ]
         newly_counted = []
         for track_id, bbox, conf, cls_id in tracks:

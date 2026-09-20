@@ -192,10 +192,14 @@ def main():
         return
 
     # Model status notice
-    if detector.is_custom_model:
-        st.success("✅ Loaded custom YOLO model.")
+    if not detector.is_custom_model:
+        st.warning(
+            "⚠️ **Running with standard YOLO fallback model.** "
+            "Use **Conveyor Belt Zone Filter** in sidebar to ignore top machinery fixtures!"
+        )
     else:
-        st.info("✅ Using pretrained YOLO model: `yolov8n.pt`")
+        st.success("✅ Loaded custom cement bag detection model: `models/best.pt`")
+
     # Step 1: Video Upload Section
     st.subheader("📹 1. Upload Plant Conveyor Video")
     uploaded_file = st.file_uploader(
